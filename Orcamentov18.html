@@ -4,11 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Benedito Resolve — Orçamentos v16</title>
-  <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#2563eb" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Orçamentos" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <style>
@@ -90,12 +85,63 @@
 
     /* catalog item */
     .cat-item { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; }
-    .cat-item-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 
     #search-results { z-index:50; }
   </style>
 </head>
 <body class="p-4 md:p-6">
+<!-- ═══ TELA DE SENHA ═══ -->
+<div id="lock-screen" style="display:flex;position:fixed;inset:0;background:#f1f5f9;z-index:99999;align-items:center;justify-content:center;">
+  <div style="background:white;border-radius:20px;padding:36px 28px;width:92%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.12);text-align:center;">
+    <div style="width:64px;height:64px;background:#2563eb;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+      <svg width="28" height="28" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24">
+        <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
+      </svg>
+    </div>
+    <h2 style="font-size:20px;font-weight:700;color:#1e293b;margin-bottom:6px;">Benedito Resolve</h2>
+    <p style="font-size:13px;color:#64748b;margin-bottom:24px;">Digite a senha para continuar</p>
+    <input id="lock-input" type="password" placeholder="senha"
+      style="width:100%;padding:12px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:15px;outline:none;text-align:center;letter-spacing:4px;font-family:Inter,sans-serif;"
+      onfocus="this.style.borderColor='#3b82f6'"
+      onblur="this.style.borderColor='#e2e8f0'"
+      onkeydown="if(event.key==='Enter')checkPassword()" />
+    <p id="lock-error" style="color:#ef4444;font-size:12px;margin-top:8px;display:none;">Senha incorreta. Tente novamente.</p>
+    <button onclick="checkPassword()"
+      style="margin-top:16px;width:100%;padding:13px;background:#2563eb;color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
+      Entrar
+    </button>
+  </div>
+</div>
+
+<script>
+(function() {
+  const KEY = atob('bWlkcndraHlnZw==');
+  const HASH = '7e2c4f1a9b3d6e8f0a2c5b7d9e1f3a4c6b8d0e2f4a6c8b0d2e4f6a8c0b2d4e6';
+  window.checkPassword = function() {
+    var val = document.getElementById('lock-input').value;
+    if (val === KEY) {
+      sessionStorage.setItem('br_auth', HASH);
+      document.getElementById('lock-screen').style.display = 'none';
+    } else {
+      var err = document.getElementById('lock-error');
+      err.style.display = 'block';
+      document.getElementById('lock-input').value = '';
+      document.getElementById('lock-input').style.borderColor = '#ef4444';
+      setTimeout(function(){ document.getElementById('lock-input').style.borderColor = '#e2e8f0'; }, 1500);
+    }
+  };
+  document.addEventListener('DOMContentLoaded', function() {
+    var screen = document.getElementById('lock-screen');
+    if (sessionStorage.getItem('br_auth') === HASH) {
+      screen.style.display = 'none';
+    } else {
+      screen.style.display = 'flex';
+      document.getElementById('lock-input').focus();
+    }
+  });
+})();
+</script>
+
 
 <!-- ═══ SHARE READ-ONLY VIEW ═══ -->
 <div id="share-view">
@@ -945,24 +991,26 @@ function renderCatalog() {
         ${svcs.map(s => {
           const idx = state.catalog.findIndex(c => c.name===s.name && c.category===s.category);
           return `<div class="cat-item">
-            <span class="text-xs text-slate-700 font-semibold">${escHtml(s.name)}</span>
-            <div class="cat-item-row">
-            <span class="text-xs text-slate-400">mín</span>
-            <input type="number" value="${s.min}" min="0" step="1"
-              class="fi text-xs font-mono" style="width:72px"
-              onchange="updateCatalogItem(${idx},'min',this.value)" />
-            <span class="text-xs text-slate-400">máx</span>
-            <input type="number" value="${s.max}" min="0" step="1"
-              class="fi text-xs font-mono" style="width:72px"
-              onchange="updateCatalogItem(${idx},'max',this.value)" />
-            <input type="number" value="${s.duration||''}" min="0" step="5" placeholder="min"
-              class="fi text-xs font-mono" style="width:58px" title="duração padrão (minutos)"
-              onchange="updateCatalogItem(${idx},'duration',this.value)" />
-            <button onclick="removeCatalogItem(${idx})" class="text-red-400 hover:text-red-600 ml-1 flex-shrink-0" title="remover">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </button>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+              <span style="font-size:12px;font-weight:600;color:#1e293b;flex:1;">${escHtml(s.name)}</span>
+              <button onclick="removeCatalogItem(${idx})" class="text-red-400 hover:text-red-600 flex-shrink-0" title="remover">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span class="text-xs text-slate-400">mín</span>
+              <input type="number" value="${s.min}" min="0" step="1"
+                class="fi text-xs font-mono" style="width:72px"
+                onchange="updateCatalogItem(${idx},'min',this.value)" />
+              <span class="text-xs text-slate-400">máx</span>
+              <input type="number" value="${s.max}" min="0" step="1"
+                class="fi text-xs font-mono" style="width:72px"
+                onchange="updateCatalogItem(${idx},'max',this.value)" />
+              <input type="number" value="${s.duration||''}" min="0" step="5" placeholder="min"
+                class="fi text-xs font-mono" style="width:58px" title="duração padrão (minutos)"
+                onchange="updateCatalogItem(${idx},'duration',this.value)" />
             </div>
           </div>`;
         }).join('')}
@@ -2438,17 +2486,6 @@ checkShareView();
 renderDashboard();
 
 console.log('✅ Benedito Resolve — sistema carregado.');
-</script>
-
-<script>
-// ═══ PWA — Registro do Service Worker ═══
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js')
-      .then(() => console.log('✅ Service Worker registrado — app funciona offline!'))
-      .catch(err => console.warn('SW não registrado:', err));
-  });
-}
 </script>
 </body>
 </html>
