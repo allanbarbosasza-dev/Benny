@@ -89,7 +89,8 @@
     .rank-bar-fill.green { background:linear-gradient(90deg,#22c55e,#16a34a); }
 
     /* catalog item */
-    .cat-item { display:grid; grid-template-columns:1fr auto auto auto auto auto auto; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; }
+    .cat-item { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; }
+    .cat-item-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 
     #search-results { z-index:50; }
   </style>
@@ -944,7 +945,8 @@ function renderCatalog() {
         ${svcs.map(s => {
           const idx = state.catalog.findIndex(c => c.name===s.name && c.category===s.category);
           return `<div class="cat-item">
-            <span class="text-xs text-slate-700 font-medium truncate">${escHtml(s.name)}</span>
+            <span class="text-xs text-slate-700 font-semibold">${escHtml(s.name)}</span>
+            <div class="cat-item-row">
             <span class="text-xs text-slate-400">mín</span>
             <input type="number" value="${s.min}" min="0" step="1"
               class="fi text-xs font-mono" style="width:72px"
@@ -958,9 +960,10 @@ function renderCatalog() {
               onchange="updateCatalogItem(${idx},'duration',this.value)" />
             <button onclick="removeCatalogItem(${idx})" class="text-red-400 hover:text-red-600 ml-1 flex-shrink-0" title="remover">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                <path stroke-linecap="round" stroke-linejoin="stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
               </svg>
             </button>
+            </div>
           </div>`;
         }).join('')}
       </div>
