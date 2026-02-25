@@ -11,93 +11,389 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Benny" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <title>Benedito Resolve — Orçamentos v16</title>
+  <title>Benedito Resolve — Orçamentos</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDNRyksKZ1Lvj-sWeUV9_5ZwAardNnQjB8",
+      authDomain: "benny-383f5.firebaseapp.com",
+      projectId: "benny-383f5",
+      storageBucket: "benny-383f5.firebasestorage.app",
+      messagingSenderId: "683593146961",
+      appId: "1:683593146961:web:ad8678f1ee5e1b3a744e70"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db   = firebase.firestore();
+    const auth = firebase.auth();
+
+    // ── Estado de sincronização ──────────────────────────────
+    let _firebaseUser = null;
+    let _syncPending  = false;
+
+    auth.onAuthStateChanged(user => {
+      _firebaseUser = user;
+      const panelOut = document.getElementById('firebase-panel-loggedout');
+      const panelIn  = document.getElementById('firebase-panel-loggedin');
+      const emailEl  = document.getElementById('firebase-user-email');
+      if (user) {
+        console.log('✅ Firebase: logado como', user.uid);
+        if (panelOut) panelOut.style.display = 'none';
+        if (panelIn)  panelIn.style.display  = 'block';
+        if (emailEl)  emailEl.textContent     = '👤 ' + (user.email || user.displayName || user.uid);
+        _loadFromCloud();
+      } else {
+        if (panelOut) panelOut.style.display = 'block';
+        if (panelIn)  panelIn.style.display  = 'none';
+      }
+    });
+
+    // Login com Google
+    function loginGoogle() {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      auth.signInWithPopup(provider).catch(err => {
+        console.error('Erro no login Google:', err);
+        alert('Erro ao entrar com Google: ' + err.message);
+      });
+    }
+
+    function logout() {
+      if (!confirm('Sair da conta Google? Os dados locais são mantidos.')) return;
+      auth.signOut();
+      _firebaseUser = null;
+      _setSyncStatus('desconectado', '⚪');
+    }
+
+    // ── Salvar na nuvem ──────────────────────────────────────
+    async function _saveToCloud(data) {
+      if (!_firebaseUser) return;
+      try {
+        _setSyncStatus('salvando…', '🔄');
+        await db.collection('usuarios').doc(_firebaseUser.uid)
+          .collection('dados').doc('principal')
+          .set({ ...data, _savedAt: firebase.firestore.FieldValue.serverTimestamp() });
+        _setSyncStatus('sincronizado ☁️ ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), '✅');
+      } catch(e) {
+        console.error('Erro ao salvar na nuvem:', e);
+        _setSyncStatus('erro ao sincronizar', '⚠️');
+      }
+    }
+
+    // ── Carregar da nuvem ────────────────────────────────────
+    async function _loadFromCloud() {
+      if (!_firebaseUser) return;
+      try {
+        _setSyncStatus('carregando da nuvem…', '🔄');
+        const doc = await db.collection('usuarios').doc(_firebaseUser.uid)
+          .collection('dados').doc('principal').get();
+        if (doc.exists) {
+          const d = doc.data();
+          delete d._savedAt;
+          // mescla com estado atual (nuvem tem prioridade)
+          if (d.clientName !== undefined) state.clientName = d.clientName;
+          if (d.clientId   !== undefined) state.clientId   = d.clientId;
+          if (Array.isArray(d.services))   state.services   = d.services.map(s=>({notes:'',materialCost:0,embedMaterial:false,duration:0,...s}));
+          if (d.travel)                    Object.assign(state.travel, d.travel);
+          if (Array.isArray(d.quotes))     state.quotes     = d.quotes;
+          if (Array.isArray(d.fixedCosts)) state.fixedCosts = d.fixedCosts;
+          if (Array.isArray(d.clients))    state.clients    = d.clients;
+          if (Array.isArray(d.catalog) && d.catalog.length) state.catalog = d.catalog;
+          if (d.config)                    Object.assign(state.config, d.config);
+          // re-renderiza com dados da nuvem
+          applyStateToUI();
+          renderDashboard();
+          _setSyncStatus('sincronizado ☁️ ' + new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), '✅');
+          console.log('✅ Dados carregados da nuvem');
+        } else {
+          _setSyncStatus('nuvem vazia — dados locais em uso', '☁️');
+        }
+      } catch(e) {
+        console.error('Erro ao carregar da nuvem:', e);
+        _setSyncStatus('erro ao carregar nuvem', '⚠️');
+      }
+    }
+
+    function _setSyncStatus(msg, icon) {
+      const el = document.getElementById('sync-status');
+      if (el) el.innerHTML = `${icon} ${msg}`;
+    }
+  </script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    * { box-sizing: border-box; }
-    body { font-family: 'Inter', sans-serif; background: #f1f5f9; min-height: 100vh; }
 
-    /* tabs */
-    .tab-btn { padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .18s; color: #64748b; white-space: nowrap; }
-    .tab-btn.active { background: white; color: #1e40af; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
-    .tab-btn:hover:not(.active) { background: rgba(255,255,255,.6); color: #334155; }
+    :root {
+      --blue:       #1d4ed8;
+      --blue-light: #3b82f6;
+      --blue-bg:    #eff6ff;
+      --green:      #15803d;
+      --green-bg:   #f0fdf4;
+      --amber:      #b45309;
+      --red:        #991b1b;
+      --slate-50:   #f8fafc;
+      --slate-100:  #f1f5f9;
+      --slate-200:  #e2e8f0;
+      --slate-400:  #94a3b8;
+      --slate-600:  #475569;
+      --slate-700:  #334155;
+      --slate-800:  #1e293b;
+      --radius:     14px;
+      --shadow:     0 2px 12px rgba(0,0,0,.08);
+      --shadow-md:  0 4px 20px rgba(0,0,0,.10);
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #eef2f7;
+      min-height: 100vh;
+      /* espaço para bottom nav no mobile */
+      padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    }
+    @media(min-width:768px){ body { padding-bottom: 0; } }
+
+    /* ── TOP NAV TABS (desktop) ──────────────────────────── */
+    .top-tabs-nav {
+      display: none;
+    }
+    @media(min-width:768px){
+      .top-tabs-nav {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 20px;
+        background: rgba(255,255,255,.7);
+        backdrop-filter: blur(8px);
+        padding: 6px;
+        border-radius: var(--radius);
+        border: 1px solid var(--slate-200);
+        box-shadow: var(--shadow);
+      }
+    }
+    .tab-btn {
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .18s;
+      color: var(--slate-600);
+      white-space: nowrap;
+      border: none;
+      background: transparent;
+    }
+    .tab-btn.active {
+      background: var(--blue);
+      color: white;
+      box-shadow: 0 2px 8px rgba(29,78,216,.35);
+    }
+    .tab-btn:hover:not(.active) { background: var(--slate-100); color: var(--slate-800); }
+
+    /* ── BOTTOM NAV (mobile) ─────────────────────────────── */
+    .bottom-nav {
+      display: flex;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: white;
+      border-top: 1px solid var(--slate-200);
+      box-shadow: 0 -4px 20px rgba(0,0,0,.09);
+      z-index: 900;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    @media(min-width:768px){ .bottom-nav { display:none; } }
+
+    .bnav-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 10px 4px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      color: var(--slate-400);
+      font-size: 10px;
+      font-weight: 600;
+      font-family: 'Inter', sans-serif;
+      transition: color .15s;
+      min-height: 58px;
+    }
+    .bnav-btn svg { width:22px; height:22px; stroke-width:1.8; }
+    .bnav-btn.active { color: var(--blue); }
+    .bnav-btn.active svg { stroke-width: 2.2; }
+
+    /* ── PANELS ─────────────────────────────────────────── */
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
 
-    /* cards */
-    .card { background: white; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.07); }
+    /* ── CARDS ───────────────────────────────────────────── */
+    .card {
+      background: white;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(0,0,0,.04);
+    }
 
-    /* inputs */
-    .fi { width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; font-family:'Inter',sans-serif; outline:none; transition:border .15s,box-shadow .15s; background:white; }
-    .fi:focus { border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.15); }
-    select.fi { cursor:pointer; }
-    .label-xs { font-size:11px; font-weight:600; color:#64748b; margin-bottom:3px; display:block; }
+    /* ── INPUTS ──────────────────────────────────────────── */
+    .fi {
+      width: 100%;
+      padding: 11px 13px;
+      border: 1.5px solid var(--slate-200);
+      border-radius: 10px;
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      outline: none;
+      transition: border .15s, box-shadow .15s;
+      background: white;
+      color: var(--slate-800);
+      -webkit-appearance: none;
+    }
+    .fi:focus {
+      border-color: var(--blue-light);
+      box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+    }
+    select.fi { cursor: pointer; }
+    .label-xs {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--slate-400);
+      margin-bottom: 5px;
+      display: block;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
 
-    /* status badges */
-    .badge { display:inline-flex; align-items:center; font-size:11px; font-weight:700; padding:3px 9px; border-radius:99px; text-transform:uppercase; letter-spacing:.05em; }
-    .badge-enviado     { background:#dbeafe; color:#1d4ed8; }
-    .badge-aprovado    { background:#dcfce7; color:#166534; }
-    .badge-em_execucao { background:#fef3c7; color:#92400e; }
-    .badge-concluido   { background:#d1fae5; color:#065f46; }
-    .badge-perdido     { background:#fee2e2; color:#991b1b; }
+    /* ── BADGES ──────────────────────────────────────────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 99px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .badge-enviado     { background: #dbeafe; color: #1d4ed8; }
+    .badge-aprovado    { background: #dcfce7; color: #166534; }
+    .badge-em_execucao { background: #fef3c7; color: #92400e; }
+    .badge-concluido   { background: #d1fae5; color: #065f46; }
+    .badge-perdido     { background: #fee2e2; color: #991b1b; }
 
-    /* agendamento */
-    .appt-block { background:linear-gradient(135deg,#f0fdf4,#ecfdf5); border:1px solid #86efac; border-radius:10px; padding:12px 14px; }
-    .appt-block.has-date { border-color:#22c55e; background:linear-gradient(135deg,#dcfce7,#f0fdf4); }
-    .tog-track { width:38px; height:22px; background:#cbd5e1; border-radius:99px; position:relative; cursor:pointer; transition:background .2s; flex-shrink:0; }
-    .tog-track.on { background:#2563eb; }
-    .tog-thumb { position:absolute; top:3px; left:3px; width:16px; height:16px; background:white; border-radius:50%; transition:left .2s; box-shadow:0 1px 3px rgba(0,0,0,.2); }
-    .tog-track.on .tog-thumb { left:19px; }
+    /* ── TOGGLE ──────────────────────────────────────────── */
+    .appt-block { background: var(--green-bg); border: 1px solid #86efac; border-radius: 12px; padding: 14px; }
+    .appt-block.has-date { border-color: #22c55e; background: linear-gradient(135deg,#dcfce7,#f0fdf4); }
+    .tog-track { width:44px; height:26px; background:#cbd5e1; border-radius:99px; position:relative; cursor:pointer; transition:background .2s; flex-shrink:0; }
+    .tog-track.on { background: var(--blue-light); }
+    .tog-thumb { position:absolute; top:3px; left:3px; width:20px; height:20px; background:white; border-radius:50%; transition:left .2s; box-shadow:0 1px 4px rgba(0,0,0,.25); }
+    .tog-track.on .tog-thumb { left:21px; }
 
-    /* travel */
-    .travel-section { background: linear-gradient(135deg,#eff6ff,#f0fdf4); border:1px solid #bfdbfe; border-radius:12px; padding:16px; }
+    /* ── TRAVEL SECTION ──────────────────────────────────── */
+    .travel-section {
+      background: linear-gradient(135deg, #eff6ff, #f0fdf4);
+      border: 1.5px solid #bfdbfe;
+      border-radius: 12px;
+      padding: 16px;
+    }
 
-    /* service item */
-    .svc-item { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px; }
+    /* ── SERVICE ITEM ────────────────────────────────────── */
+    .svc-item {
+      background: var(--slate-50);
+      border: 1.5px solid var(--slate-200);
+      border-radius: 12px;
+      padding: 14px;
+    }
 
-    /* accordion cards (quote-card e client-card compartilham o mesmo padrão) */
-    .quote-card, .client-card { border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; }
-    .quote-card-head, .client-card-head { padding:14px 16px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
-    .quote-card-head:hover, .client-card-head:hover { background:#f8fafc; }
-    .quote-card-body, .client-card-body { display:none; padding:16px; border-top:1px solid #f1f5f9; }
-    .quote-card.open .quote-card-body, .client-card.open .client-card-body { display:block; }
-    .quote-card.open .chevron, .client-card.open .chevron { transform:rotate(180deg); }
-    .chevron { transition:transform .2s; }
+    /* ── ACCORDION CARDS ─────────────────────────────────── */
+    .quote-card, .client-card {
+      border: 1.5px solid var(--slate-200);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: box-shadow .18s;
+    }
+    .quote-card:hover, .client-card:hover { box-shadow: var(--shadow-md); }
+    .quote-card-head, .client-card-head {
+      padding: 16px 18px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .quote-card-head:hover, .client-card-head:hover { background: var(--slate-50); }
+    .quote-card-body, .client-card-body { display: none; padding: 18px; border-top: 1px solid var(--slate-100); }
+    .quote-card.open .quote-card-body, .client-card.open .client-card-body { display: block; }
+    .quote-card.open .chevron, .client-card.open .chevron { transform: rotate(180deg); }
+    .chevron { transition: transform .2s; }
 
-    /* progress bar */
-    .prog-bar  { height:10px; background:#e2e8f0; border-radius:99px; overflow:hidden; }
-    .prog-fill { height:100%; border-radius:99px; transition:width .4s; background:linear-gradient(90deg,#3b82f6,#2563eb); }
-    .prog-fill.warn { background:linear-gradient(90deg,#f59e0b,#d97706); }
-    .prog-fill.ok   { background:linear-gradient(90deg,#22c55e,#16a34a); }
+    /* ── PROGRESS BAR ────────────────────────────────────── */
+    .prog-bar  { height: 10px; background: var(--slate-200); border-radius: 99px; overflow: hidden; }
+    .prog-fill { height: 100%; border-radius: 99px; transition: width .4s; background: linear-gradient(90deg,#3b82f6,#1d4ed8); }
+    .prog-fill.warn { background: linear-gradient(90deg,#f59e0b,#d97706); }
+    .prog-fill.ok   { background: linear-gradient(90deg,#22c55e,#16a34a); }
 
-    /* modals */
-    .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:999; align-items:center; justify-content:center; }
+    /* ── MODALS ──────────────────────────────────────────── */
+    .modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.5); backdrop-filter:blur(4px); z-index:999; align-items:center; justify-content:center; }
     .modal.open { display:flex; }
-    .modal .inner { background:white; border-radius:16px; padding:28px; width:94%; }
+    .modal .inner { background:white; border-radius:20px; padding:28px; width:94%; box-shadow: 0 8px 40px rgba(0,0,0,.18); }
     #backup-modal .inner { max-width:480px; }
-    #share-modal  .inner { max-width:560px; }
-
-    /* .d-none: sobrepõe classes utilitárias do Tailwind (ex: flex) quando necessário */
+    /* ── UTILITY ─────────────────────────────────────────── */
     .d-none { display:none !important; }
 
-    /* share view */
-    #share-view { display:none; position:fixed; inset:0; background:#f1f5f9; z-index:9999; overflow-y:auto; padding:24px; }
-    #share-view.open { display:block; }
+    /* ── SHARE VIEW ──────────────────────────────────────── */
 
-    /* ranking bars */
-    .rank-bar-wrap { height:8px; background:#e2e8f0; border-radius:99px; overflow:hidden; flex:1; }
+    /* ── RANKING BARS ────────────────────────────────────── */
+    .rank-bar-wrap { height:8px; background:var(--slate-200); border-radius:99px; overflow:hidden; flex:1; }
     .rank-bar-fill { height:100%; border-radius:99px; background:linear-gradient(90deg,#2563eb,#7c3aed); transition:width .5s; }
     .rank-bar-fill.green { background:linear-gradient(90deg,#22c55e,#16a34a); }
 
-    /* catalog item */
-    .cat-item { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0; background:#f8fafc; }
+    /* ── CATALOG ITEM ────────────────────────────────────── */
+    .cat-item { display:flex; flex-direction:column; gap:6px; padding:12px 14px; border-radius:10px; border:1.5px solid var(--slate-200); background:var(--slate-50); }
+
+    /* ── STAT CARDS ──────────────────────────────────────── */
+    .stat-card {
+      background: white;
+      border-radius: var(--radius);
+      padding: 18px 16px;
+      text-align: center;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(0,0,0,.04);
+    }
+    .stat-card .stat-val { font-size: 26px; font-weight: 800; line-height: 1.1; }
+    .stat-card .stat-label { font-size: 11px; color: var(--slate-400); font-weight: 600; margin-top: 4px; text-transform: uppercase; letter-spacing: .04em; }
+
+    /* ── SECTION TITLE ───────────────────────────────────── */
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--slate-400);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 10px;
+    }
+
+    /* ── HEADER ──────────────────────────────────────────── */
+    .app-header {
+      background: white;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px 18px;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border: 1px solid rgba(0,0,0,.04);
+    }
 
     #search-results { z-index:50; }
   </style>
 </head>
-<body class="p-4 md:p-6">
+<body class="px-3 pt-3 md:px-6 md:pt-6">
 <!-- ═══ TELA DE SENHA ═══ -->
 <div id="lock-screen" style="display:flex;position:fixed;inset:0;background:#f1f5f9;z-index:99999;align-items:center;justify-content:center;">
   <div style="background:white;border-radius:20px;padding:36px 28px;width:92%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.12);text-align:center;">
@@ -152,43 +448,7 @@
 
 
 <!-- ═══ SHARE READ-ONLY VIEW ═══ -->
-<div id="share-view">
-  <div style="max-width:560px;margin:0 auto">
-    <div class="card p-6 border-t-4 border-blue-500">
-      <div class="flex items-center gap-3 mb-5">
-        <div class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
-          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
-          </svg>
-        </div>
-        <div>
-          <p id="share-owner-name" class="font-bold text-slate-800">Proposta de Serviços</p>
-          <p id="share-owner-sub" class="text-xs text-slate-400"></p>
-        </div>
-      </div>
-      <pre id="share-text" class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-mono bg-slate-50 p-4 rounded-lg"></pre>
-      <button onclick="document.getElementById('share-view').classList.remove('open')"
-        class="mt-4 w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition">fechar</button>
-    </div>
-  </div>
-</div>
-
 <!-- ═══ SHARE MODAL ═══ -->
-<div id="share-modal" class="modal">
-  <div class="inner">
-    <h3 class="text-lg font-bold text-slate-800 mb-2">Link da proposta</h3>
-    <p class="text-sm text-slate-500 mb-4">Compartilhe com o cliente. Ele verá a proposta em uma página limpa e profissional.</p>
-    <div class="flex gap-2">
-      <input id="share-url-input" type="text" readonly class="fi flex-1 text-xs font-mono bg-slate-50" />
-      <button onclick="copyShareLink()" class="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition font-semibold whitespace-nowrap">copiar link</button>
-    </div>
-    <p class="text-xs text-slate-400 mt-3">⚠️ O link funciona apenas neste dispositivo e navegador.</p>
-    <button onclick="document.getElementById('share-modal').classList.remove('open')"
-      class="mt-4 w-full py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-semibold hover:bg-slate-200 transition">fechar</button>
-  </div>
-</div>
-
 <!-- ═══ EDIT QUOTE MODAL ═══ -->
 <div id="edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 12px;">
   <div style="background:white;border-radius:16px;padding:24px;max-width:580px;width:100%;margin:auto;">
@@ -201,6 +461,13 @@
     <div class="mb-3">
       <label class="label-xs">cliente</label>
       <input id="eq-client" type="text" class="fi text-sm" placeholder="nome do cliente" />
+    </div>
+
+    <!-- data do orçamento -->
+    <div class="mb-3">
+      <label class="label-xs">📅 data do orçamento</label>
+      <input id="eq-date" type="date" class="fi text-sm" />
+      <p class="text-xs text-slate-400 mt-1">Altere se precisar lançar com data retroativa.</p>
     </div>
 
     <!-- serviços existentes -->
@@ -278,10 +545,31 @@
 <div id="backup-modal" class="modal">
   <div class="inner">
     <div class="flex justify-between items-center mb-5">
-      <h3 class="text-xl font-bold text-slate-800">💾 Backup (JSON)</h3>
+      <h3 class="text-xl font-bold text-slate-800">💾 Backup</h3>
       <button onclick="document.getElementById('backup-modal').classList.remove('open')" class="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
     </div>
-    <p class="text-sm text-slate-500 mb-5">O arquivo JSON contém <strong>todos os seus dados</strong>: orçamentos, histórico, clientes, catálogo e configurações. Guarde-o no Google Drive ou pendrive.</p>
+
+    <!-- Painel Firebase -->
+    <div id="firebase-panel-loggedout" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin-bottom:16px;">
+      <p style="font-size:14px;font-weight:600;color:#1e40af;margin-bottom:8px;">☁️ Sincronização na Nuvem</p>
+      <p style="font-size:13px;color:#475569;margin-bottom:12px;">Entre com sua conta Google para sincronizar automaticamente entre celular e notebook.</p>
+      <button onclick="loginGoogle()" style="width:100%;padding:10px;background:#1d4ed8;color:white;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;">
+        🔑 Entrar com Google
+      </button>
+    </div>
+    <div id="firebase-panel-loggedin" style="display:none;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:16px;margin-bottom:16px;">
+      <p style="font-size:14px;font-weight:600;color:#15803d;margin-bottom:4px;">☁️ Nuvem ativa</p>
+      <p id="firebase-user-email" style="font-size:12px;color:#475569;margin-bottom:8px;"></p>
+      <p id="sync-status" style="font-size:12px;color:#475569;margin-bottom:10px;">⚪ aguardando…</p>
+      <button onclick="_loadFromCloud()" style="padding:8px 14px;background:white;border:1px solid #86efac;border-radius:8px;font-size:12px;font-weight:600;color:#15803d;cursor:pointer;margin-right:8px;">
+        🔄 Forçar sincronização
+      </button>
+      <button onclick="logout()" style="padding:8px 14px;background:white;border:1px solid #fca5a5;border-radius:8px;font-size:12px;font-weight:600;color:#991b1b;cursor:pointer;">
+        Sair
+      </button>
+    </div>
+
+    <p class="text-sm text-slate-500 mb-4">Backup manual em JSON (segurança extra):</p>
     <div class="grid grid-cols-2 gap-3 mb-4">
       <button onclick="exportJSON()"
         class="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-bold transition flex items-center justify-center gap-2">
@@ -300,32 +588,58 @@
 <div class="max-w-6xl mx-auto">
 
   <!-- HEADER -->
-  <header class="mb-5 flex flex-col md:flex-row md:justify-between md:items-center gap-3">
+  <header class="app-header">
     <div class="flex items-center gap-3">
-      <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow flex-shrink-0">
-        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+      <div style="width:40px;height:40px;background:linear-gradient(135deg,#1d4ed8,#2563eb);border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(29,78,216,.35);flex-shrink:0;">
+        <svg width="20" height="20" fill="none" stroke="white" stroke-width="2.2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
         </svg>
       </div>
       <div>
-        <h1 id="header-name" class="text-xl font-bold text-slate-800 tracking-tight">Benedito Resolve</h1>
-        <p id="current-date" class="text-xs text-slate-400"></p>
+        <h1 id="header-name" class="font-bold text-slate-800" style="font-size:16px;line-height:1.2;letter-spacing:-.01em;">Benedito Resolve</h1>
+        <p id="current-date" class="text-xs text-slate-400" style="margin-top:1px;"></p>
       </div>
     </div>
     <button onclick="document.getElementById('backup-modal').classList.add('open')"
-      class="self-start md:self-auto flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-blue-400 text-slate-600 hover:text-blue-600 rounded-xl text-xs font-semibold transition shadow-sm">
-      💾 backup
+      style="display:flex;align-items:center;gap:6px;padding:9px 14px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;font-size:12px;font-weight:700;color:#475569;cursor:pointer;font-family:Inter,sans-serif;transition:all .15s;"
+      onmouseover="this.style.borderColor='#3b82f6';this.style.color='#1d4ed8';"
+      onmouseout="this.style.borderColor='#e2e8f0';this.style.color='#475569';">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+      Backup
     </button>
   </header>
 
-  <!-- TABS NAV -->
-  <nav class="flex gap-1.5 mb-5 bg-slate-200/60 p-1.5 rounded-xl overflow-x-auto">
-    <button class="tab-btn active" onclick="switchTab('orcamento')">📋 Orçamento</button>
-    <button class="tab-btn" onclick="switchTab('clientes')">👥 Clientes</button>
-    <button class="tab-btn" onclick="switchTab('historico')">📁 Histórico</button>
-    <button class="tab-btn" onclick="switchTab('painel')">📊 Painel</button>
-    <button class="tab-btn" onclick="switchTab('config')">⚙️ Configurações</button>
+  <!-- TABS NAV (desktop) -->
+  <nav class="top-tabs-nav">
+    <button class="tab-btn active" onclick="switchTab('orcamento')">Orçamento</button>
+    <button class="tab-btn" onclick="switchTab('clientes')">Clientes</button>
+    <button class="tab-btn" onclick="switchTab('historico')">Histórico</button>
+    <button class="tab-btn" onclick="switchTab('painel')">Painel</button>
+    <button class="tab-btn" onclick="switchTab('config')">Configurações</button>
+  </nav>
+
+  <!-- BOTTOM NAV (mobile) -->
+  <nav class="bottom-nav">
+    <button class="bnav-btn active" id="bnav-orcamento" onclick="switchTab('orcamento')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      Orçamento
+    </button>
+    <button class="bnav-btn" id="bnav-clientes" onclick="switchTab('clientes')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Clientes
+    </button>
+    <button class="bnav-btn" id="bnav-historico" onclick="switchTab('historico')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+      Histórico
+    </button>
+    <button class="bnav-btn" id="bnav-painel" onclick="switchTab('painel')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      Painel
+    </button>
+    <button class="bnav-btn" id="bnav-config" onclick="switchTab('config')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+      Config
+    </button>
   </nav>
 
   <!-- ══════════════════════════════════════════
@@ -439,8 +753,10 @@
         </div>
 
         <button onclick="saveToHistory()"
-          class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition text-sm shadow-sm">
-          💾 salvar no histórico
+          style="width:100%;padding:15px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:white;font-weight:700;border-radius:12px;border:none;font-size:15px;cursor:pointer;font-family:Inter,sans-serif;box-shadow:0 4px 14px rgba(29,78,216,.35);transition:all .18s;letter-spacing:-.01em;"
+          onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 18px rgba(29,78,216,.4)'"
+          onmouseout="this.style.transform='';this.style.boxShadow='0 4px 14px rgba(29,78,216,.35)'">
+          Salvar no Histórico
         </button>
       </section>
 
@@ -450,12 +766,8 @@
           <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
             <h2 class="text-base font-semibold text-slate-700">Proposta profissional</h2>
             <div class="flex gap-2 flex-wrap">
-              <button onclick="generateShareLink()"
-                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg transition font-medium">🔗 link</button>
               <button id="btn-copy-proposal"
                 class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg transition font-medium">copiar texto</button>
-              <button id="btn-export-pdf"
-                class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition font-medium">exportar PDF</button>
             </div>
           </div>
           <pre id="proposal-content" class="text-slate-700 text-sm leading-relaxed bg-slate-50 p-4 rounded-xl min-h-[160px] whitespace-pre-wrap font-mono">olá! segue o detalhamento do orçamento solicitado:
@@ -463,14 +775,6 @@
 (selecione serviços para gerar a proposta)</pre>
         </div>
 
-        <div class="card p-6 border-t-4 border-green-400">
-          <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
-            <h2 class="text-base font-semibold text-slate-700">Script de fechamento</h2>
-            <button id="btn-copy-script"
-              class="text-xs bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 px-3 py-2 rounded-lg transition font-medium">copiar proposta + script</button>
-          </div>
-          <pre id="script-content" class="text-slate-700 text-sm leading-relaxed bg-slate-50 p-4 rounded-xl min-h-[80px] whitespace-pre-wrap font-mono">selecione os serviços para gerar o script.</pre>
-        </div>
       </section>
     </div>
   </div>
@@ -506,10 +810,17 @@
 
       <!-- lista de clientes -->
       <div class="lg:col-span-2">
-        <div class="flex justify-between items-center mb-4">
+        <div class="flex justify-between items-center mb-3">
           <h2 class="text-base font-bold text-slate-800"><span id="clients-count">0</span> Clientes Cadastrados</h2>
         </div>
-        <div id="clients-list" class="space-y-3"></div>
+        <div class="relative mb-4">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z"/>
+          </svg>
+          <input id="clients-search" type="text" placeholder="buscar por nome, telefone ou endereço…"
+            class="fi pl-9 text-sm" oninput="renderClients()" />
+        </div>
+        <div id="clients-list" class="space-y-3 pb-4"></div>
       </div>
 
     </div>
@@ -536,7 +847,7 @@
         <input type="text" id="hist-search" placeholder="buscar cliente…" class="fi w-auto text-xs" oninput="renderHistory()" />
       </div>
     </div>
-    <div id="history-list" class="space-y-3"></div>
+    <div id="history-list" class="space-y-3 pb-4"></div>
   </div>
 
   <!-- ══════════════════════════════════════════
@@ -550,37 +861,37 @@
     <div class="space-y-6">
 
       <!-- estatísticas do mês -->
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="card p-4 text-center">
-          <p id="stat-total-quotes" class="text-2xl font-bold text-blue-700">0</p>
-          <p class="text-xs text-slate-500 mt-1">orçamentos enviados</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="stat-card">
+          <p id="stat-total-quotes" class="stat-val text-blue-700">0</p>
+          <p class="stat-label">orçamentos</p>
         </div>
-        <div class="card p-4 text-center">
-          <p id="stat-conversion" class="text-2xl font-bold text-green-700">0%</p>
-          <p class="text-xs text-slate-500 mt-1">taxa de conversão</p>
+        <div class="stat-card">
+          <p id="stat-conversion" class="stat-val text-green-700">0%</p>
+          <p class="stat-label">conversão</p>
         </div>
-        <div class="card p-4 text-center">
-          <p id="stat-revenue" class="text-xl font-bold text-purple-700">R$0</p>
-          <p class="text-xs text-slate-500 mt-1">faturamento (mês)</p>
+        <div class="stat-card">
+          <p id="stat-revenue" class="stat-val text-purple-700" style="font-size:20px;">R$0</p>
+          <p class="stat-label">faturamento (mês)</p>
         </div>
-        <div class="card p-4 text-center">
-          <p id="stat-avg-ticket" class="text-xl font-bold text-amber-700">R$0</p>
-          <p class="text-xs text-slate-500 mt-1">ticket médio</p>
+        <div class="stat-card">
+          <p id="stat-avg-ticket" class="stat-val text-amber-700" style="font-size:20px;">R$0</p>
+          <p class="stat-label">ticket médio</p>
         </div>
       </div>
       <!-- horas + valor/hora -->
-      <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div class="card p-4 text-center">
-          <p id="stat-hours" class="text-2xl font-bold text-cyan-700">0h</p>
-          <p class="text-xs text-slate-500 mt-1">horas estimadas (mês)</p>
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div class="stat-card">
+          <p id="stat-hours" class="stat-val text-cyan-700">0h</p>
+          <p class="stat-label">horas (mês)</p>
         </div>
-        <div class="card p-4 text-center">
-          <p id="stat-hourly" class="text-xl font-bold text-teal-700">—</p>
-          <p class="text-xs text-slate-500 mt-1">valor/hora (concluídos)</p>
+        <div class="stat-card">
+          <p id="stat-hourly" class="stat-val text-teal-700" style="font-size:20px;">—</p>
+          <p class="stat-label">valor/hora</p>
         </div>
-        <div class="card p-4 text-center col-span-2 md:col-span-1">
-          <p id="stat-hours-total" class="text-2xl font-bold text-slate-600">0h</p>
-          <p class="text-xs text-slate-500 mt-1">horas totais (histórico)</p>
+        <div class="stat-card col-span-2 md:col-span-1">
+          <p id="stat-hours-total" class="stat-val text-slate-600">0h</p>
+          <p class="stat-label">horas totais</p>
         </div>
       </div>
 
@@ -826,7 +1137,7 @@ const SK = 'benedito_v8';
 
 function saveAll() {
   try {
-    localStorage.setItem(SK, JSON.stringify({
+    const payload = {
       clientName: state.clientName,
       clientId:   state.clientId,
       services:   state.services,
@@ -836,8 +1147,14 @@ function saveAll() {
       clients:    state.clients,
       catalog:    state.catalog,
       config:     state.config,
-    }));
+    };
+    localStorage.setItem(SK, JSON.stringify(payload));
     updateBackupDate();
+    // Salva na nuvem com debounce (evita chamadas excessivas)
+    if (typeof _saveToCloud === 'function') {
+      clearTimeout(window._cloudSaveTimer);
+      window._cloudSaveTimer = setTimeout(() => _saveToCloud(payload), 2000);
+    }
   } catch(e) {
     console.error('Erro ao salvar:', e);
     alert('⚠️ Erro ao salvar: armazenamento cheio. Exporte um backup JSON e limpe orçamentos antigos.');
@@ -936,12 +1253,15 @@ function switchTab(tab) {
   state.activeTab = tab;
   const tabs = ['orcamento','clientes','historico','painel','config'];
   document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', tabs[i]===tab));
+  // bottom nav
+  tabs.forEach(t => { const el = document.getElementById('bnav-'+t); if(el) el.classList.toggle('active', t===tab); });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-'+tab).classList.add('active');
   if (tab==='historico') renderHistory();
   if (tab==='painel')    renderDashboard();
   if (tab==='clientes')  renderClients();
   if (tab==='config')    { applyConfigToUI(); renderCatalog(); }
+  window.scrollTo({top:0, behavior:'smooth'});
 }
 
 /* ============================================================
@@ -1191,18 +1511,33 @@ function deleteClient(id) {
 function renderClients() {
   document.getElementById('clients-count').innerText = state.clients.length;
   const list = document.getElementById('clients-list');
-  
+
   if (!state.clients.length) {
     list.innerHTML = `<div class="card p-10 text-center text-slate-400 italic">nenhum cliente cadastrado ainda.</div>`;
     return;
   }
 
-  list.innerHTML = state.clients.map(c => {
+  const term = (document.getElementById('clients-search')?.value || '').toLowerCase().trim();
+  const filtered = term
+    ? state.clients.filter(c =>
+        c.name.toLowerCase().includes(term) ||
+        (c.phone   || '').toLowerCase().includes(term) ||
+        (c.address || '').toLowerCase().includes(term) ||
+        (c.notes   || '').toLowerCase().includes(term)
+      )
+    : state.clients;
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="card p-10 text-center text-slate-400 italic">nenhum cliente encontrado para "<strong>${escHtml(term)}</strong>".</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(c => {
     const cQuotes = state.quotes.filter(q => q.clientId===c.id);
     const totalValue = cQuotes.filter(q=>q.status==='concluido').reduce((sum,q)=>sum+q.grandTotal,0);
     
     return `<div class="client-card" id="ccard-${c.id}">
-      <div class="client-card-head" onclick="toggleClientCard('${c.id}')">
+      <div class="client-card-head" data-toggle="client" data-id="${c.id}">
         <div class="flex-1">
           <p class="font-semibold text-slate-800 text-sm">${escHtml(c.name)}</p>
           <div class="text-xs text-slate-500 mt-0.5 space-x-2">
@@ -1242,7 +1577,19 @@ function renderClients() {
 }
 
 function toggleClientCard(id) {
-  document.getElementById('ccard-'+id)?.classList.toggle('open');
+  const card = document.getElementById('ccard-'+id);
+  if (!card) return;
+  card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    setTimeout(() => {
+      const navH = window.innerWidth < 768 ? 80 : 0;
+      const cardBottom = card.getBoundingClientRect().bottom;
+      const viewportH  = window.innerHeight - navH;
+      if (cardBottom > viewportH) {
+        window.scrollBy({ top: cardBottom - viewportH + 16, behavior: 'smooth' });
+      }
+    }, 50); // aguarda o display:block renderizar
+  }
 }
 
 /* ============================================================
@@ -1579,12 +1926,12 @@ function buildProposalText(dateOverride) {
   const dateStr = dateOverride || new Date().toLocaleDateString('pt-BR');
   const cfg     = state.config;
 
-  let t = `🛠️ *Orçamento de Prestação de Serviços* 🛠️\n`;
+  let t = `*Orçamento de Prestação de Serviços*\n`;
   t += `${cfg.ownerName}${cfg.city ? ' · '+cfg.city : ''}\n`;
-  if (cfg.phone) t += `📱 ${cfg.phone}\n`;
+  if (cfg.phone) t += `Tel.: ${cfg.phone}\n`;
   t += `\n`;
-  if (client) t += `👤 Cliente: ${client}\n`;
-  t += `📅 Data: ${dateStr}\n\n`;
+  if (client) t += `Cliente: ${client}\n`;
+  t += `Data: ${dateStr}\n\n`;
 
   let grandTotal = 0;
   state.services.forEach(s => {
@@ -1592,54 +1939,41 @@ function buildProposalText(dateOverride) {
     const mat  = s.embedMaterial ? (Number(s.materialCost)||0) : 0;
     const shown = base + mat + travPerSvc;
     grandTotal += shown;
-    t += `✅ ${s.name}\n`;
-    if (s.notes) t += `   📝 ${s.notes}\n`;
-    t += `   Investimento: ${fBRL5(shown)}\n\n`;
+    t += `- ${s.name}\n`;
+    if (s.notes) t += `  Obs.: ${s.notes}\n`;
+    t += `  Valor: ${fBRL5(shown)}\n\n`;
   });
 
   // Deslocamento visível
   if (travEnabled && mode==='visible' && travelCost>0) {
     grandTotal += travelCost;
-    t += `🚗 *Deslocamento* (${totalKm.toFixed(1)} km)\n`;
-    t += `   Combustível: ${fBRL(fuelCost)}\n`;
-    t += `   Manutenção veículo: ${fBRL(maintCost)}\n`;
-    t += `   Subtotal deslocamento: ${fBRL(travelCost)}\n\n`;
+    t += `*Deslocamento* (${totalKm.toFixed(1)} km)\n`;
+    t += `  Combustível: ${fBRL(fuelCost)}\n`;
+    t += `  Manutenção veículo: ${fBRL(maintCost)}\n`;
+    t += `  Subtotal deslocamento: ${fBRL(travelCost)}\n\n`;
   }
 
-  t += `💰 *Total: ${fBRL5(grandTotal)}*\n\n`;
-  t += `⚠️ *Observações:*\n`;
-  t += `• Início após aprovação.\n`;
-  t += `• Garantia de ${cfg.guarantee}${cfg.guarantee.includes('meses')||cfg.guarantee.includes('ano')?'':' meses'} (não cobre mau uso, desgaste natural ou peças de terceiros).\n`;
-  t += `• Materiais não inclusos (exceto se combinado o contrário).\n`;
-  if (cfg.pixKey) t += `• Pagamento à vista via *Pix* (${cfg.pixType}: ${cfg.pixKey}) ou dinheiro.\n`;
-  else t += `• Pagamento à vista via *Pix* ou dinheiro.\n`;
-  t += `\nPodemos prosseguir? Aguardamos seu retorno!`;
+  t += `*Total: ${fBRL5(grandTotal)}*\n\n`;
+  t += `*Observações:*\n`;
+  t += `- Início após aprovação.\n`;
+  t += `- Garantia de ${cfg.guarantee}${cfg.guarantee.includes('meses')||cfg.guarantee.includes('ano')?'':' meses'} (não cobre mau uso, desgaste natural ou peças de terceiros).\n`;
+  t += `- Materiais não inclusos (exceto se combinado o contrário).\n`;
+  if (cfg.pixKey) t += `- Pagamento à vista via *Pix* (${cfg.pixType}: ${cfg.pixKey}) ou dinheiro.\n`;
+  else t += `- Pagamento à vista via *Pix* ou dinheiro.\n`;
+  t += `\nPodemos prosseguir? Aguardo seu retorno.`;
   return t;
 }
 
 function updateTexts() {
   renderUpsell();
   const proposalBox = document.getElementById('proposal-content');
-  const scriptBox   = document.getElementById('script-content');
 
   if (!state.services.length) {
-    proposalBox.innerText='olá! segue o detalhamento do orçamento solicitado:\n\n(selecione serviços para gerar a proposta)';
-    scriptBox.innerText='selecione os serviços para gerar o script de fechamento.';
+    proposalBox.innerText='Selecione os serviços para gerar a proposta.';
     return;
   }
 
-  proposalBox.innerText = buildProposalText('(data inserida ao copiar/exportar)');
-
-  const first  = state.services[0].name.toLowerCase();
-  const upsell = getUpsell();
-  let scr = `*script sugerido (fechamento):*\n\n`;
-  scr += `"vi que você precisa resolver isso do(a) *${first}*. consigo te encaixar em horário prioritário nos próximos dois dias. posso confirmar para amanhã?"`;
-  if (upsell.length) {
-    scr += `\n\n*na mesma visita (opcional):*\n`;
-    upsell.forEach(u => scr += `• ${u}\n`);
-    scr += `\n"se fizer sentido, já resolvo isso no mesmo atendimento — você evita outra chamada."`;
-  }
-  scriptBox.innerText = scr;
+  proposalBox.innerText = buildProposalText('(data inserida ao copiar)');
 }
 
 /* ============================================================
@@ -1723,7 +2057,7 @@ function renderHistory() {
     const estimatedDur = (q.services||[]).reduce((a,s)=>a+(s.duration||0),0) || 60;
 
     return `<div class="quote-card" id="qcard-${q.id}">
-      <div class="quote-card-head" onclick="toggleQuoteCard('${q.id}')">
+      <div class="quote-card-head" data-toggle="quote" data-id="${q.id}">
         <div class="flex-1">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="font-semibold text-slate-800">${escHtml(q.clientName||'sem nome')}</span>
@@ -1841,7 +2175,19 @@ function renderHistory() {
 }
 
 function toggleQuoteCard(id) {
-  document.getElementById('qcard-'+id)?.classList.toggle('open');
+  const card = document.getElementById('qcard-'+id);
+  if (!card) return;
+  card.classList.toggle('open');
+  if (card.classList.contains('open')) {
+    setTimeout(() => {
+      const navH = window.innerWidth < 768 ? 80 : 0;
+      const cardBottom = card.getBoundingClientRect().bottom;
+      const viewportH  = window.innerHeight - navH;
+      if (cardBottom > viewportH) {
+        window.scrollBy({ top: cardBottom - viewportH + 16, behavior: 'smooth' });
+      }
+    }, 50);
+  }
 }
 
 function updateQuoteStatus(id, status) {
@@ -2151,58 +2497,10 @@ async function copyProposal() {
   alert(ok?'✅ proposta copiada!':'❌ erro ao copiar.');
 }
 
-async function copyScript() {
-  const text = buildProposalText()+'\n\n'+document.getElementById('script-content').innerText;
-  const ok = await copyText(text);
-  alert(ok?'✅ proposta + script copiados!':'❌ erro ao copiar.');
-}
 
-function exportPDF() {
-  if (typeof jspdf === 'undefined' || !jspdf.jsPDF) {
-    alert('❌ Biblioteca jsPDF não carregada. Verifique sua conexão.');
-    return;
-  }
-  
-  try {
-    const {jsPDF} = jspdf;
-    const doc = new jsPDF();
-    const text = buildProposalText();
-    const lines = doc.splitTextToSize(text, 180);
-    doc.text(lines, 15, 15);
-    doc.save(`orcamento-${state.clientName||'sem-nome'}-${new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')}.pdf`);
-  } catch(err) {
-    console.error('Erro ao gerar PDF:', err);
-    alert('❌ Erro ao gerar PDF: ' + err.message);
-  }
-}
 
-function generateShareLink() {
-  const text = buildProposalText();
-  const encoded = btoa(unescape(encodeURIComponent(text)));
-  const url = window.location.origin + window.location.pathname + '?share=' + encoded;
-  document.getElementById('share-url-input').value = url;
-  document.getElementById('share-modal').classList.add('open');
-}
 
-async function copyShareLink() {
-  const url = document.getElementById('share-url-input').value;
-  const ok = await copyText(url);
-  alert(ok?'✅ link copiado!':'❌ erro ao copiar.');
-}
 
-function checkShareView() {
-  const params = new URLSearchParams(window.location.search);
-  const share = params.get('share');
-  if (share) {
-    try {
-      const text = decodeURIComponent(escape(atob(share)));
-      document.getElementById('share-text').innerText = text;
-      document.getElementById('share-view').classList.add('open');
-    } catch(err) {
-      console.error('Erro ao decodificar link:', err);
-    }
-  }
-}
 
 /* ============================================================
    EDIÇÃO DE ORÇAMENTOS
@@ -2219,6 +2517,13 @@ function openEditModal(id) {
   _editServices   = JSON.parse(JSON.stringify(q.services||[]));
 
   document.getElementById('eq-client').value = q.clientName||'';
+
+  // data do orçamento (usa savedAt; fallback para hoje)
+  const _savedDate = q.savedAt ? new Date(q.savedAt) : new Date();
+  const _yyyy = _savedDate.getFullYear();
+  const _mm   = String(_savedDate.getMonth()+1).padStart(2,'0');
+  const _dd   = String(_savedDate.getDate()).padStart(2,'0');
+  document.getElementById('eq-date').value = `${_yyyy}-${_mm}-${_dd}`;
 
   // deslocamento
   const t = q.travel||{};
@@ -2385,6 +2690,17 @@ function saveEditedQuote() {
 
   // atualiza o orçamento
   q.clientName   = safeStr(document.getElementById('eq-client').value) || q.clientName;
+
+  // data personalizada
+  const newDateVal = document.getElementById('eq-date').value;
+  if (newDateVal) {
+    // mantém a hora original, troca só o dia/mês/ano
+    const orig = q.savedAt ? new Date(q.savedAt) : new Date();
+    const [ny, nm, nd] = newDateVal.split('-').map(Number);
+    orig.setFullYear(ny, nm-1, nd);
+    q.savedAt = orig.toISOString();
+  }
+
   q.services     = JSON.parse(JSON.stringify(_editServices));
   q.travelCost   = travAmt;
   q.fuelCost     = mode !== 'none' ? fuelCost  : 0;
@@ -2474,8 +2790,6 @@ document.getElementById('current-date').innerText = new Date().toLocaleDateStrin
 });
 
 document.getElementById('btn-copy-proposal').addEventListener('click', copyProposal);
-document.getElementById('btn-copy-script').addEventListener('click', copyScript);
-document.getElementById('btn-export-pdf').addEventListener('click', exportPDF);
 
 document.getElementById('client-name').addEventListener('input', e => {
   state.clientName = e.target.value; updateTexts(); saveAll();
@@ -2490,10 +2804,50 @@ document.addEventListener('click', e => {
 
 loadAll();
 applyStateToUI();
-checkShareView();
 renderDashboard();
 
 console.log('✅ Benedito Resolve — sistema carregado.');
+
+/* ── Scroll-safe card toggle ─────────────────────────────
+   Usa touchstart/touchend com threshold de 8px.
+   Se o dedo se moveu (scroll), ignora o toque.          */
+(function() {
+  let startY = 0, startX = 0, moved = false;
+
+  document.addEventListener('touchstart', function(e) {
+    startY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
+    moved = false;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if (Math.abs(e.touches[0].clientY - startY) > 8 ||
+        Math.abs(e.touches[0].clientX - startX) > 8) {
+      moved = true;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (moved) return;
+    const head = e.target.closest('[data-toggle]');
+    if (!head) return;
+    e.preventDefault();
+    const type = head.dataset.toggle;
+    const id   = head.dataset.id;
+    if (type === 'client') toggleClientCard(id);
+    if (type === 'quote')  toggleQuoteCard(id);
+  }, { passive: false });
+
+  // Fallback para mouse (desktop)
+  document.addEventListener('click', function(e) {
+    const head = e.target.closest('[data-toggle]');
+    if (!head) return;
+    const type = head.dataset.toggle;
+    const id   = head.dataset.id;
+    if (type === 'client') toggleClientCard(id);
+    if (type === 'quote')  toggleQuoteCard(id);
+  });
+})();
 </script>
 
 <script>
